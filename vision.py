@@ -13,9 +13,6 @@ from torch.autograd import Variable
 import torchvision
 from torchvision import transforms, datasets
 
-BATCH_SIZE = 16
-EPOCHS = 4
-
 preprocess = transforms.Compose([
     transforms.Grayscale(),
     transforms.Resize(28),
@@ -26,27 +23,37 @@ preprocess = transforms.Compose([
 
 class Net(nn.Module):
     def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(28*28, 64)
-        self.fc2 = nn.Linear(64, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.fc4 = nn.Linear(64, 10)
+        super(Net, self).__init__()
+
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2))
+
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2))
+        
+        self.drop_out = nn.Dropout()
+        self.fc1 = nn.Linear(7 * 7 * 64, 1000)
+        self.fc2 = nn.Linear(1000, 10)
 
     def forward(self, x):
-        x = fn.relu(self.fc1(x))
-        x = fn.relu(self.fc2(x))
-        x = fn.relu(self.fc3(x))
-        x = self.fc4(x)
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = out.reshape(out.size(0), -1)
+        out = self.drop_out(out)
+        out = self.fc1(out)
+        out = self.fc2(out)
+        return out
 
-        return fn.log_softmax(x, dim=1)
-
-
-def train_model(testset, no_cuda=False):
+def train_model(testset, epochs=2, batch_size=64, no_cuda=False):
     training = datasets.MNIST("", train=True, download=True,
                               transform=transforms.Compose([transforms.ToTensor()]))
 
     trainset = torch.utils.data.DataLoader(
-        training, batch_size=BATCH_SIZE, shuffle=True)
+        training, batch_size=batch_size, shuffle=True)
 
     device = torch.device('cpu' if no_cuda else 'cuda')
 
@@ -54,14 +61,15 @@ def train_model(testset, no_cuda=False):
     net.train()
 
     optimizer = optim.Adam(net.parameters(), lr=0.001)
+    criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(EPOCHS):
-        print("Begin Epoch", epoch + 1, "/", EPOCHS)
+    for epoch in range(epochs):
+        print("Begin Epoch", epoch + 1, "/", epochs)
         for (data, target) in tqdm(trainset):
             data, target = data.to(device), target.to(device)
             net.zero_grad()
-            output = net(data.view(-1, 28*28))
-            loss = fn.nll_loss(output, target)
+            output = net(data)
+            loss = criterion(output, target)
             loss.backward()
             optimizer.step()
         print('Loss:', loss.item())
@@ -70,7 +78,7 @@ def train_model(testset, no_cuda=False):
             count_matches = 0
             for (data, target) in testset:
                 data = data.to(device)
-                output = net(data.view(-1, 28*28))
+                output = net(data)
                 for i, output in enumerate(output):
                     if torch.argmax(output) == target[i]:
                         count_matches += 1
@@ -86,18 +94,18 @@ def load_model(path):
     return the_model
 
 
-def evaluate(imageset, model, no_cuda=False):
+def evaluate(image_folder, model, no_cuda=False):
     device = torch.device('cpu' if no_cuda else 'cuda')
     model.to(device)
     model.eval()
     with torch.no_grad():
-        size = len(imageset)
-        for idx, (data, target) in enumerate(imageset):
+        size = len(image_folder)
+        for idx, (data, target) in enumerate(image_folder):
             plt.subplot(1, size, idx + 1)
             plt.axis('off')
             plt.imshow(data.view(28, 28))
             data = data.to(device)
-            output = model(data.view(-1, 28*28))
+            output = model(data.view(-1, 1, 28, 28))
             plt.title(str(torch.argmax(output).item()))
         plt.savefig('output.png')
         plt.show()
@@ -112,7 +120,11 @@ def main():
                         help='path to the trained model (default: ./models/numbers.model)')
     parser.add_argument('--images', type=str, default="./images/", metavar='PATH',
                         help='path to the testing data (default: ./images/)')
-    parser.add_argument('--no-cuda', action='store_true', default=False)                        
+    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+                        help='number of samples per batch (default: 64)')
+    parser.add_argument('--epochs', type=int, default=2, metavar='N',
+                        help='number of epochs (default: 2)')
+    parser.add_argument('--no-cuda', action='store_true', default=False, help='use cpu for training and evaluation')                        
 
     args = parser.parse_args()
 
@@ -128,15 +140,12 @@ def main():
     )
 
     testset = torch.utils.data.DataLoader(
-        image_folder, batch_size=BATCH_SIZE, shuffle=False
+        image_folder, batch_size=args.batch_size, shuffle=False
     )
 
-    #print(image_folder.class_to_idx)
-    #exit()
-
     if args.train:
-        model = train_model(testset, no_cuda=args.no_cuda)
         path = args.model
+        model = train_model(testset, batch_size=args.batch_size, epochs=args.epochs, no_cuda=args.no_cuda)
         torch.save(model.state_dict(), path)
 
     else:
