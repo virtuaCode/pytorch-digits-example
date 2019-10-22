@@ -13,7 +13,7 @@ from torch.autograd import Variable
 import torchvision
 from torchvision import transforms, datasets
 
-BATCH_SIZE = 10
+BATCH_SIZE = 16
 EPOCHS = 4
 
 preprocess = transforms.Compose([
@@ -28,8 +28,8 @@ class Net(nn.Module):
     def __init__(self):
         super().__init__()
         self.fc1 = nn.Linear(28*28, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 64)
+        self.fc2 = nn.Linear(64, 128)
+        self.fc3 = nn.Linear(128, 64)
         self.fc4 = nn.Linear(64, 10)
 
     def forward(self, x):
@@ -41,14 +41,14 @@ class Net(nn.Module):
         return fn.log_softmax(x, dim=1)
 
 
-def train_model(use_cuda):
+def train_model(testset, no_cuda=False):
     training = datasets.MNIST("", train=True, download=True,
                               transform=transforms.Compose([transforms.ToTensor()]))
 
     trainset = torch.utils.data.DataLoader(
         training, batch_size=BATCH_SIZE, shuffle=True)
 
-    device = torch.device('cuda' if use_cuda else 'cpu')
+    device = torch.device('cpu' if no_cuda else 'cuda')
 
     net = Net().to(device)
     net.train()
@@ -64,7 +64,18 @@ def train_model(use_cuda):
             loss = fn.nll_loss(output, target)
             loss.backward()
             optimizer.step()
-        print(loss)
+        print('Loss:', loss.item())
+        with torch.no_grad():
+            count = 0
+            count_matches = 0
+            for (data, target) in testset:
+                data = data.to(device)
+                output = net(data.view(-1, 28*28))
+                for i, output in enumerate(output):
+                    if torch.argmax(output) == target[i]:
+                        count_matches += 1
+                    count += 1
+            print('Accuracy:', count_matches * 100.0 / count)
 
     return net
 
@@ -75,8 +86,8 @@ def load_model(path):
     return the_model
 
 
-def evaluate(imageset, model, use_cuda=True):
-    device = torch.device('cuda' if use_cuda else 'cpu')
+def evaluate(imageset, model, no_cuda=False):
+    device = torch.device('cpu' if no_cuda else 'cuda')
     model.to(device)
     model.eval()
     with torch.no_grad():
@@ -101,24 +112,37 @@ def main():
                         help='path to the trained model (default: ./models/numbers.model)')
     parser.add_argument('--images', type=str, default="./images/", metavar='PATH',
                         help='path to the testing data (default: ./images/)')
+    parser.add_argument('--no-cuda', action='store_true', default=False)                        
 
     args = parser.parse_args()
 
+    if not (torch.cuda.is_available() or args.no_cuda):
+        print('Err: no cuda device found, run with option --no-cuda', file=sys.stderr)
+        exit(1)
+
+    image_path = args.images
+
+    image_folder = torchvision.datasets.ImageFolder(
+        root=image_path,
+        transform=preprocess,
+    )
+
+    testset = torch.utils.data.DataLoader(
+        image_folder, batch_size=BATCH_SIZE, shuffle=False
+    )
+
+    #print(image_folder.class_to_idx)
+    #exit()
+
     if args.train:
-        model = train_model(torch.cuda.is_available())
+        model = train_model(testset, no_cuda=args.no_cuda)
         path = args.model
         torch.save(model.state_dict(), path)
 
     else:
         path = args.model
-        image_path = args.images
-
-        imageset = torchvision.datasets.ImageFolder(
-            root=image_path,
-            transform=preprocess,
-        )
         model = load_model(path)
-        evaluate(imageset, model)
+        evaluate(image_folder, model, no_cuda=args.no_cuda)
 
 
 if __name__ == '__main__':
