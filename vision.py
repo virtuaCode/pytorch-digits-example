@@ -48,12 +48,19 @@ class Net(nn.Module):
         out = self.fc2(out)
         return out
 
-def train_model(testset, epochs=2, batch_size=64, no_cuda=False):
+def train_model(epochs=2, batch_size=64, no_cuda=False):
     training = datasets.MNIST("", train=True, download=True,
                               transform=transforms.Compose([transforms.ToTensor()]))
 
     trainset = torch.utils.data.DataLoader(
         training, batch_size=batch_size, shuffle=True)
+
+    testing = datasets.MNIST("", train=False, download=True,
+        transform=transforms.Compose([transforms.ToTensor()]))
+
+    testset = torch.utils.data.DataLoader(
+        testing, batch_size=batch_size, shuffle=False)
+
 
     device = torch.device('cpu' if no_cuda else 'cuda')
 
@@ -139,13 +146,9 @@ def main():
         transform=preprocess,
     )
 
-    testset = torch.utils.data.DataLoader(
-        image_folder, batch_size=args.batch_size, shuffle=False
-    )
-
     if args.train:
         path = args.model
-        model = train_model(testset, batch_size=args.batch_size, epochs=args.epochs, no_cuda=args.no_cuda)
+        model = train_model(batch_size=args.batch_size, epochs=args.epochs, no_cuda=args.no_cuda)
         torch.save(model.state_dict(), path)
 
     else:
